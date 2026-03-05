@@ -1,0 +1,56 @@
+# Custom Point-Wise Interventions Notebook
+
+## Problem & Goal
+
+The existing notebook ([004_ts_benchmark.ipynb](file:///Users/davidzapata/Documents/GitHub/inherently_interpretable_causal_ml/src/004_ts_benchmark.ipynb)) performs interventions by **shifting an entire variable** (e.g., set X1 = μ ± 2σ for the whole test series). The user wants a fundamentally different approach: **200 individual point-wise interventions**, each at a single random time step with a diverse random value.
+
+## Evaluation Protocol (Critical)
+
+For the SCM `X4[t] = 0.25 * X1[t-2] + e4` (max_lag=2):
+
+### Ground Truth
+For each intervention `do(X1 = v)` at a row in the lagged test set:
+- Recompute X4 using the TRUE SCM: `X4_true = 0.25 * v + original_noise`
+
+### Traditional Model (does NOT propagate)
+- Take the test row's lagged features (all 14 features)
+- Replace **all X1 lags** (X1_lag0, X1_lag1, X1_lag2) with the intervention value `v`
+- Keep **all other variables unchanged** (X2, X3, X4, U lags stay at original values)
+- Predict X4 directly from these 14 features
+
+### Causal Model (DOES propagate through the graph)
+- Set the intervention: X1_lag2 = `v` (and other root nodes from original data)
+- **Propagate step by step** in topological order through the causal graph:
+  1. **X4_lag0** = causal_model_X4.predict(X1_lag2 = v)
+  2. **X3_lag0** = causal_model_X3.predict(X4_lag0 = *predicted above*, U_lag0 = original)
+  3. **X2_lag0** = causal_model_X2.predict(X3_lag1 = original)
+  4. **X1_lag0** = causal_model_X1.predict(X2_lag0 = *predicted above*, U_lag0 = original)
+- This is the `what_if=True` mode — predictions cascade through the graph
+
+### Why This Tests Causal vs Traditional
+The traditional model doesn't understand causality: it sees X1 changed but assumes X2, X3, X4 lags are still the original values. The causal model correctly propagates the intervention effect through the structure.
+
+## Proposed Changes
+
+### [NEW] [005_custom_interventions.ipynb](file:///Users/davidzapata/Documents/GitHub/inherently_interpretable_causal_ml/src/005_custom_interventions.ipynb)
+
+A new standalone notebook. Sections 1–9 are identical to `004` (DGP, features, graph, split, model training, observational evaluation). The new content:
+
+**Section 10 — Custom Point-Wise Intervention Loop** (200 iterations):
+1. Sample a random intervention value from diverse strategies (uniform, normal, extreme, zero, sign flip, constant shift)
+2. Pick a random row from the test set
+3. Compute ground truth using true SCM + original noise
+4. Evaluate traditional model (replace X1 lags, keep rest)
+5. Evaluate causal model (propagate through graph)
+6. Record per-intervention results
+
+**Section 11 — Aggregation**: RMSE/MAE/WAPE across all 200 interventions per model
+
+**Section 12 — Visualizations**: scatter plots, error distributions, breakdown by intervention type
+
+## Verification Plan
+
+Run the notebook end-to-end and verify:
+1. Results table shows metrics for all 5 models × 2 types
+2. Causal models generally outperform traditional under interventions
+3. Sanity: identity intervention (delta=0) → causal predictions ≈ observational predictions
